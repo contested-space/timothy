@@ -119,6 +119,23 @@ new_survey(Experiments, Gen, Sizes, Iters) ->
        std_devs    = #{}
     }.
 
+
+%% Run a survey, and tally the statistics of its experiments.
+%% In pseudo-code, we have (roughly) the following algorithm:
+%%
+%%     for size in survey.sizes do
+%%         for _ in 1 to survey.iterations do
+%%             x = survey.generator(size)
+%%             for exp in survey.experiments do
+%%                 t = time exp.function(x)
+%%                 exp.times.append(t)
+%%             done
+%%         done
+%%         for exp in survey.experiments do
+%%             compile_experiment_stats(exp)
+%%         done
+%%         tally(survey, survey.experiments)
+%%     done
 run_survey(S = #survey{experiments = Experiments,
                        generator = Gen,
                        input_sizes = Sizes,
