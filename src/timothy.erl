@@ -1,9 +1,12 @@
 -module(timothy).
 
+-compile(export_all).
+
 -export([
          new_survey/4,
          new_experiment/2,
-         run_survey/1
+         run_survey/1,
+         report_survey/1
 ]).
 
 -type size() :: non_neg_integer().
@@ -150,6 +153,49 @@ run_survey(S = #survey{experiments = Experiments,
       Sizes).
 
 
+report_survey(S) ->
+    ExpNames = [E#experiment.name || E <- S#survey.experiments],
+
+    rule(),
+    io:format("| ~8s | ~10s | ~16s | ~16s | ~16s | ~16s | ~16s |~n",
+              ["Size", "Experiment", "Minimum", "Maximum",
+               "Median", "Mean", "Std. Dev."]),
+    rule(),
+    lists:foreach(
+      fun(Size) ->
+              line(Size, ExpNames, S),
+              rule()
+      end,
+      S#survey.input_sizes).
+
+rule() ->
+    IoStr = [$+,
+             lists:duplicate(10, $-), $+,
+             lists:duplicate(12, $-), $+,
+             lists:duplicate(18, $-), $+,
+             lists:duplicate(18, $-), $+,
+             lists:duplicate(18, $-), $+,
+             lists:duplicate(18, $-), $+,
+             lists:duplicate(18, $-), $+],
+    io:format("~s~n", [IoStr]).
+
+line(Size, Names, Survey) ->
+    lists:foreach(
+      fun({I, Name}) ->
+              io:format("| ~8B | ~10s | ~16B | ~16B | ~16.3f | ~16.3f | ~16.3f |~n",
+                        [Size,
+                         Name,
+                         survey_get(Survey, Size, I, #survey.minimums),
+                         survey_get(Survey, Size, I, #survey.maximums),
+                         survey_get(Survey, Size, I, #survey.medians),
+                         survey_get(Survey, Size, I, #survey.means),
+                         survey_get(Survey, Size, I, #survey.std_devs)
+                        ]
+                       )
+      end,
+      lists:zip(lists:seq(1, length(Names)), Names)).
+
+
 %% Private functions
 run_experiments(Experiments, Gen, Size, Iters) ->
     lists:foldl(
@@ -214,3 +260,7 @@ tally(Survey = #survey{
       variances = maps:put(Size, Variances, SurveyVariances),
       std_devs  = maps:put(Size, StdDevs, SurveyStdDevs)
     }.
+
+
+survey_get(S, Size, Index, Field) ->
+    lists:nth(Index, maps:get(Size, element(Field, S))).
