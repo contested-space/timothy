@@ -1,106 +1,199 @@
 -module(timothy).
 
 -export([
-         new_experiment/3,
-         run_experiment/2
+         new_survey/4,
+         new_experiment/2,
+         run_survey/1
 ]).
 
+-type size() :: non_neg_integer().
 
-%% An experiment is a structure that contains three ingredients:
-%% - A list of benchmarks: this list contains pairs where the
-%%     first element is an atom giving the benchmark a name,
-%%     and the second element is the function to measure; this
-%%     function accepts one input term and returns a result.
-%%     If we wish to benchmark a function that requires more
-%%     than one parameter, a small wrapper function will be
-%%     necessary.
+%% A survey is made up of four components:
 %%
-%%     As a point of convention, the first element of the benchmark
-%%     list is the basis, the reference against which the other
-%%     benchmarks will be compared.  Therefore, the benchmark list
-%%     should contain at least two elements.
+%% - A list of experiments: the precise definition of an experiment
+%%     is given in the next section, but roughly an experiment is
+%%     a function to measure for performance.
 %%
-%% - An input generator function: this function is used to create
-%%     input terms that will be fed to the benchmarks.  The input
+%% - An input generator function: a function used to create input
+%%     terms that will be fed to the experiment functions.  The input
 %%     generator accepts a non-negative integer argument that
 %%     specifies the size of the term to generate.  For example, if
 %%     the argument is 5, a generator could generate a list containing
-%%     5 elements, a tree with 5 leaf nodes, a binary with 5 bytes, etc.
+%%     5 elements, a tree with 5 leaf nodes, a binary with 5 bytes,
+%%     etc.
 %%
-%%     When an input term has been generated, it will be fed to all the
-%%     benchmarking functions; this ensures that the measurements obtained
-%%     stem from the same inputs and that no benchmark may have been
-%%     biased by giving it "nicer" terms (e.g., a sorted list for insertion
-%%     sort vs. a reversed list for quick sort).
+%%     When an input term has been generated, it will be fed to all
+%%     the benchmarking functions; this ensures that the measurements
+%%     stem from the same inputs and that no benchmark may have
+%%     accidentally been biased by giving it "nicer" terms (e.g., a
+%%     sorted list for insertion sort vs. a reversed list for quick
+%%     sort).
 %%
-%% - A list of input sizes: an important data point when doing performance
-%%     measurements is "how does the size of the input affect the speed of
-%%     a function?"  Some algorithms offer good performance on smaller inputs
-%%     while others only start showing their advantage once the input size
-%%     becomes quite large.
--record(experiment, {
-          benchmarks      :: [{atom(), fun((term()) -> term())}],
-          input_generator :: fun((non_neg_integer()) -> term()),
-          input_sizes     :: [non_neg_integer()]
+%%     Because the inputs are passed to all the benchmarking
+%%     functions, it is okay (and even recommended) to generate
+%%     randomized inputs.
+%%
+%% - A list of input sizes: an important data point when doing
+%%     performance measurements is "how does the size of the input
+%%     affect the speed of a function?"  Some algorithms offer good
+%%     performance on smaller inputs while others only start showing
+%%     their advantage once the input size becomes quite large.  The
+%%     values in this list will be passed to the input generator
+%%     function.
+%%
+%% - A number of iterations: by sampling each experiment multiple times,
+%%     we can compute useful statistics such as the mean, the standard
+%%     deviation, etc., which help us determine if the results
+%%     obtained can be trusted to be close to reality or if they might
+%%     have been affected by external noise.
+%%
+%% The other fields, the tallied statistics, regroup the statistics of
+%% the experiments.
+-record(survey, {
+          %% Parameters
+          experiments :: [experiment()],
+          generator   :: fun((size()) -> any()),
+          input_sizes :: [size()],
+          iterations  :: non_neg_integer(),
+
+          %% Tallied statistics
+          minimums    :: #{size() => [float()]},
+          maximums    :: #{size() => [float()]},
+          medians     :: #{size() => [float()]},
+          means       :: #{size() => [float()]},
+          variances   :: #{size() => [float()]},
+          std_devs    :: #{size() => [float()]}
 }).
 
 
-new_experiment(Benchmarks, Gen, Sizes) ->
+%% An experiment has a name to identify it, and a function that we
+%% wish to benchmark.  This function should accept a term created
+%% by a survey's generator function; the return value is ignored
+%% by timothy.  (It it our philosophy that validating that two
+%% functions are semantically identical is outside the scope of
+%% a benchmarking tool, and should be done with unit and property
+%% tests.)
+%%
+%% Each time the experiment is run, the time it took to execute the
+%% function is added to the `times` field (technically, the function
+%% `run_experiment` returns a new experiment with an updated `times`
+%% field); once all the timings have been gathered, the function
+%% `compile_experiment_stats` will fill the remaining fields.
+-record(experiment, {
+          %% Parameters
+          name     :: atom(),
+          function :: fun((any()) -> any()),
+
+          %% Computed statistics
+          times    :: [float()],
+          n        :: undefined | non_neg_integer(),
+          minimum  :: undefined | float(),
+          maximum  :: undefined | float(),
+          median   :: undefined | float(),
+          mean     :: undefined | float(),
+          variance :: undefined | float(),
+          std_dev  :: undefined | float()
+}).
+
+-type experiment() :: #experiment{}.
+
+%% Public functions
+new_experiment(Name, Fun) ->
     #experiment{
-       benchmarks = Benchmarks,
-       input_generator = Gen,
-       input_sizes = Sizes
+       name = Name,
+       function = Fun,
+       times = []
     }.
 
+new_survey(Experiments, Gen, Sizes, Iters) ->
+    #survey{
+       experiments = Experiments,
+       generator   = Gen,
+       input_sizes = Sizes,
+       iterations  = Iters,
+       minimums    = #{},
+       maximums    = #{},
+       medians     = #{},
+       means       = #{},
+       variances   = #{},
+       std_devs    = #{}
+    }.
 
-%% Obtain time measurements for the benchmarks in an experiment.
-%% The second argument, Iterations, controls how many time each
-%% benchmark is executed per input size.  By sampling each function
-%% multiple times, we can compute useful statistics such as the mean,
-%% the standard deviation, etc., which help us determine if the
-%% results obtained can be trusted to be close to reality or if they
-%% have been affected by external noise.
-%%
-%% The following pseudo-code summarizes the process.
-%%
-%% for size in input_sizes do
-%%   for _ in 1..iterations do
-%%     x = gen(size)
-%%     for id, bench in benchmarks do
-%%       t = time bench(x)
-%%       results[size, id].push(t)
-%%     done
-%%   done
-%% done
-run_experiment(#experiment{benchmarks = Benchmarks,
-                           input_generator = Gen,
-                           input_sizes = Sizes},
-               Iterations) ->
+run_survey(S = #survey{experiments = Experiments,
+                       generator = Gen,
+                       input_sizes = Sizes,
+                       iterations = Iters}) ->
     lists:foldl(
-      fun(Size, Acc) ->
-              R = benchmark_n_times(Benchmarks, Gen, Size, Iterations),
-              dict:store(Size, R, Acc)
+      fun(Size, Survey) ->
+              Exps = run_experiments(Experiments, Gen, Size, Iters),
+              Exps2 = lists:map(fun compile_experiment_stats/1, Exps),
+              tally(Survey, Exps2, Size)
       end,
-      dict:new(),
+      S,
       Sizes).
 
 
-benchmark_n_times(Benchmarks, Gen, Size, Iterations) ->
+%% Private functions
+run_experiments(Experiments, Gen, Size, Iters) ->
     lists:foldl(
-      fun(_, Acc) ->
-              R = benchmark_once(Benchmarks, Gen, Size),
-              lists:foldl(
-                fun({Name, Time}, Acc2) -> dict:append(Name, Time, Acc2) end,
-                Acc,
-                R)
+      fun(_Iter, Experiments2) ->
+              X = Gen(Size),
+              lists:map(fun(E) -> run_experiment(E, X) end, Experiments2)
       end,
-      dict:new(),
-      lists:seq(1, Iterations)).
+      Experiments,
+      lists:seq(1, Iters)
+     ).
 
+run_experiment(E = #experiment{function = Fun, times = Times}, X) ->
+    {T, _} = timer:tc(Fun, [X]),
+    E#experiment{times = [T | Times]}.
 
-benchmark_once(Benchmarks, Gen, Size) ->
-    Input = Gen(Size),
-    [begin
-         {T, _} = timer:tc(Fun, [Input]),
-         {Name, T}
-     end || {Name, Fun} <- Benchmarks].
+compile_experiment_stats(E = #experiment{times = Times}) ->
+    SortedTimes = lists:sort(Times),
+    N = length(SortedTimes),
+    HalfN = N div 2,
+    Median = case N rem 2 of
+                 0 -> (lists:nth(HalfN, SortedTimes)
+                       + lists:nth(HalfN+1, SortedTimes)) / 2;
+                 1 -> lists:nth(HalfN, SortedTimes)
+             end,
+    Mean = lists:foldl(fun(X, Acc) -> Acc + X/N end,
+                       0.0,
+                       SortedTimes),
+    Variance = lists:foldl(fun(X, Acc) -> Acc + math:pow(X - Mean, 2) end,
+                           0.0,
+                           SortedTimes) / (N - 1),
+    StdDev = math:sqrt(Variance),
+    E#experiment {
+      times    = SortedTimes,
+      n        = N,
+      minimum  = hd(SortedTimes),
+      maximum  = lists:last(SortedTimes),
+      median   = Median,
+      mean     = Mean,
+      variance = Variance,
+      std_dev  = StdDev
+    }.
+
+tally(Survey = #survey{
+         minimums = SurveyMinimums,
+         maximums = SurveyMaximums,
+         medians = SurveyMedians,
+         means = SurveyMeans,
+         variances = SurveyVariances,
+         std_devs = SurveyStdDevs
+      }, Experiments, Size) ->
+    Minimums  = [E#experiment.minimum  || E <- Experiments],
+    Maximums  = [E#experiment.maximum  || E <- Experiments],
+    Medians   = [E#experiment.median   || E <- Experiments],
+    Means     = [E#experiment.mean     || E <- Experiments],
+    Variances = [E#experiment.variance || E <- Experiments],
+    StdDevs   = [E#experiment.std_dev  || E <- Experiments],
+    Survey#survey{
+      minimums  = maps:put(Size, Minimums, SurveyMinimums),
+      maximums  = maps:put(Size, Maximums, SurveyMaximums),
+      medians   = maps:put(Size, Medians, SurveyMedians),
+      means     = maps:put(Size, Means, SurveyMeans),
+      variances = maps:put(Size, Variances, SurveyVariances),
+      std_devs  = maps:put(Size, StdDevs, SurveyStdDevs)
+    }.
