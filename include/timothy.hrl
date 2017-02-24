@@ -25,36 +25,24 @@
 %%     functions, it is okay (and even recommended) to generate
 %%     randomized inputs.
 %%
-%% - A list of input sizes: an important data point when doing
+%% - An input size: an important data point when doing
 %%     performance measurements is "how does the size of the input
 %%     affect the speed of a function?"  Some algorithms offer good
 %%     performance on smaller inputs while others only start showing
-%%     their advantage once the input size becomes quite large.  The
-%%     values in this list will be passed to the input generator
-%%     function.
+%%     their advantage once the input size becomes quite large.  This
+%%     value will be passed to the input generator.
 %%
 %% - A number of iterations: by sampling each experiment multiple times,
 %%     we can compute useful statistics such as the mean, the standard
 %%     deviation, etc., which help us determine if the results
 %%     obtained can be trusted to be close to reality or if they might
 %%     have been affected by external noise.
-%%
-%% The other fields, the tallied statistics, regroup the statistics of
-%% the experiments.
 -record(survey, {
           %% Parameters
           experiments :: [experiment()],
           generator   :: fun((size()) -> any()),
-          input_sizes :: [size()],
-          iterations  :: non_neg_integer(),
-
-          %% Tallied statistics
-          minimums    :: #{size() => [float()]},
-          maximums    :: #{size() => [float()]},
-          medians     :: #{size() => [float()]},
-          means       :: #{size() => [float()]},
-          variances   :: #{size() => [float()]},
-          std_devs    :: #{size() => [float()]}
+          input_size  :: size(),
+          iterations  :: non_neg_integer()
 }).
 
 -type survey() :: #survey{}.
@@ -77,16 +65,16 @@
           %% Parameters
           name     :: atom(),
           function :: fun((any()) -> any()),
-
-          %% Computed statistics
-          times    :: [float()],
-          n        :: undefined | non_neg_integer(),
-          minimum  :: undefined | float(),
-          maximum  :: undefined | float(),
-          median   :: undefined | float(),
-          mean     :: undefined | float(),
-          variance :: undefined | float(),
-          std_dev  :: undefined | float()
+          times    :: [float()]
 }).
 
 -type experiment() :: #experiment{}.
+
+
+
+-record(histogram, {
+    slice_size :: float(),
+    tally      :: #{non_neg_integer() => non_neg_integer()}
+}).
+
+-type histogram() :: #histogram{}.
