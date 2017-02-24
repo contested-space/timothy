@@ -53,26 +53,27 @@ run_survey(S = #survey{experiments = Experiments,
                        generator = Gen,
                        input_sizes = Sizes,
                        iterations = Iters}) ->
-    lists:foldl(
-      fun(Size, Survey) ->
-              Exps = run_experiments(Experiments, Gen, Size, Iters),
-              Exps2 = lists:map(fun compile_experiment_stats/1, Exps),
-              tally(Survey, Exps2, Size)
-      end,
-      S,
-      Sizes).
+    lists:foldl(fun(Size, Survey) ->
+        Exps = run_experiments(Experiments, Gen, Size, Iters),
+        Exps2 = lists:map(fun compile_experiment_stats/1, Exps),
+        tally(Survey, Exps2, Size)
+    end, S, Sizes).
 
 
 %% Private functions
+
+%% run_experiments doesn't use lists:seq/2 anymore, because for a large
+%% number of iterations (which can be common when measuring fast experiments),
+%% the Erlang VM would run out of heap space.
 run_experiments(Experiments, Gen, Size, Iters) ->
-    lists:foldl(
-      fun(_Iter, Experiments2) ->
-              X = Gen(Size),
-              lists:map(fun(E) -> run_experiment(E, X) end, Experiments2)
-      end,
-      Experiments,
-      lists:seq(1, Iters)
-     ).
+    run_experiments_loop(Experiments, Gen, Size, Iters).
+    
+run_experiments_loop(Experiments, _Gen, _Size, 0) ->
+    Experiments;
+run_experiments_loop(Experiments, Gen, Size, Iters) ->
+    X = Gen(Size),
+    Experiments2 = lists:map(fun(E) -> run_experiment(E, X) end, Experiments),
+    run_experiments_loop(Experiments2, Gen, Size, Iters - 1).
 
 
 run_experiment(E = #experiment{function = Fun, times = Times}, X) ->
@@ -130,7 +131,3 @@ tally(Survey = #survey{
       variances = maps:put(Size, Variances, SurveyVariances),
       std_devs  = maps:put(Size, StdDevs, SurveyStdDevs)
     }.
-
-
-survey_get(S, Size, Index, Field) ->
-    lists:nth(Index, maps:get(Size, element(Field, S))).
